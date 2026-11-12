@@ -78,6 +78,18 @@ jobs:
                           b = j.get(blk) or {'columns': [], 'data': []}
                           idx = [b['columns'].index(c) for c in cols if c in b['columns']]
                           out[blk] = {'columns': [b['columns'][k] for k in idx], 'data': [[row[k] for k in idx] for row in b['data']]}
+                      # множитель контракта (руб. за пункт) — по одному опциону этой даты, как считает калькулятор: STEPPRICE / MINSTEP
+                      sec = next((r[0] for blk in ('call', 'put') for r in out[blk]['data'] if r), None)
+                      if sec:
+                          try:
+                              u2 = 'https://iss.moex.com/iss/engines/futures/markets/options/securities/' + urllib.parse.quote(sec) + '.json?iss.meta=off&iss.only=securities'
+                              with urllib.request.urlopen(urllib.request.Request(u2, headers={'User-Agent': 'Mozilla/5.0'}), timeout=30) as r2:
+                                  sj = json.load(r2)['securities']
+                              row = dict(zip(sj['columns'], sj['data'][0]))
+                              if row.get('MINSTEP') and row.get('STEPPRICE'):
+                                  out['mult'] = row['STEPPRICE'] / row['MINSTEP']
+                          except Exception as e2:
+                              print('нет условий контракта', a, d, sec, e2)
                       return a, d, out
                   except Exception as e:
                       err = e; time.sleep(3)
@@ -92,7 +104,7 @@ jobs:
           stamp = msk.strftime('%Y-%m-%d %H:%M')
           for a, boards in by.items():
               json.dump({'updated': stamp, 'asset': a, 'boards': boards}, open('data/optboard/' + a + '.json', 'w', encoding='utf8'), ensure_ascii=False, separators=(',', ':'))
-          print('доски опционов:', len(by), 'активов,', sum(len(v) for v in by.values()), 'досок из', len(jobs))
+          print('доски опционов:', len(by), 'активов,', sum(len(v) for v in by.values()), 'досок из', len(jobs), '; с множителем:', sum(1 for v in by.values() for b in v.values() if 'mult' in b))
           assert by, 'биржа не отдала ни одной доски'
           PY
       - name: Сохранить
