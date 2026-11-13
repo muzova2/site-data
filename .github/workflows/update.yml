@@ -3,10 +3,18 @@
 name: Обновить данные
 on:
   schedule:
-    - cron: '50 19 * * *'   # 22:50 МСК, после всех ежедневных обновлений в Google
+    # 14.11.2026: четыре запуска за вечер (GitHub запускает по расписанию с опозданием до 5 часов).
+    # Раньше 22:30 МСК нельзя: Google пересчитывает данные до 22:20. Если данные не изменились, запуск ничего не записывает.
+    - cron: '37 19 * * *'   # 22:37 МСК
+    - cron: '37 20 * * *'   # 23:37 МСК
+    - cron: '37 21 * * *'   # 00:37 МСК
+    - cron: '37 22 * * *'   # 01:37 МСК
   workflow_dispatch:
 permissions:
   contents: write
+concurrency:
+  group: update-data
+  cancel-in-progress: false
 jobs:
   update:
     runs-on: ubuntu-latest
