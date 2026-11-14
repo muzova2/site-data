@@ -1,4 +1,4 @@
-# ВРЕМЕННО (14.11.2026): разведка источников данных ЦБ и Росстата. Ничего не записывает. Удалить после проверки.
+# ВРЕМЕННО (14.11.2026): разведка источников данных ЦБ и Росстата. Ничего не записывает в репозиторий. Удалить после проверки.
 name: Разведка источников
 on:
   workflow_dispatch:
@@ -6,43 +6,43 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - run: pip install -q openpyxl
+      - run: pip install -q openpyxl xlrd
       - name: Разведка
         run: |
-          python3 - <<'PY'
-          import re, urllib.request, json, io, openpyxl, datetime
+          python3 - <<'PY' > /tmp/out.txt 2>&1 || true
+          import re, urllib.request, json, io, openpyxl
           UA = {'User-Agent': 'Mozilla/5.0'}
           def get(u, n=60):
               try:
                   return urllib.request.urlopen(urllib.request.Request(u, headers=UA), timeout=n).read()
               except Exception as e:
-                  print('  ОШИБКА', u, e); return b''
-          def links(u, pat=r'\.(xlsx|xls|csv|json)'):
-              t = get(u).decode('utf-8', 'replace')
-              print('\n=== ', u, len(t))
+                  print('ERR', u, str(e)[:80]); return b''
+          def links(u, pat, lim=8):
+              t = get(u).decode('utf-8', 'replace'); print('\n##', u, len(t)); k = 0
               for h, txt in re.findall(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', t, re.S):
-                  if re.search(pat, h, re.I):
-                      print('  ', h, '|', re.sub(r'\s+', ' ', re.sub('<[^>]+>', '', txt)).strip()[:90])
-          for u in ['https://www.cbr.ru/analytics/dkp/inflationary_expectations/',
-                    'https://www.cbr.ru/analytics/dkp/monitoring/',
-                    'https://www.cbr.ru/statistics/macro_itm/dkfs/',
-                    'https://www.cbr.ru/statistics/ms/',
-                    'https://www.cbr.ru/statistics/macro_itm/',
-                    'https://www.cbr.ru/analytics/dkp/inflation/',
-                    'https://rosstat.gov.ru/statistics/price']:
-              links(u)
-          print('\n=== dataservice publications')
+                  if re.search(pat, h + txt, re.I) and k < lim:
+                      k += 1; print(' ', h, '|', re.sub(r'(&#160;|\s)+', ' ', re.sub('<[^>]+>', '', txt)).strip()[:70])
+          def dump(b, rows=30, cols=8):
+              if not b: return
+              try:
+                  wb = openpyxl.load_workbook(io.BytesIO(b), read_only=True, data_only=True)
+              except Exception as e:
+                  print(' not xlsx', e); return
+              for ws in wb.worksheets[:8]:
+                  R = list(ws.iter_rows(values_only=True)); print(' [лист]', ws.title, len(R), 'x', ws.max_column)
+                  for r in R[:rows]:
+                      v = [str(x)[:22] for x in r if x is not None]
+                      if v: print('   ', v[:3], '...', v[-3:] if len(v) > 3 else '')
+          links('https://www.cbr.ru/statistics/macro_itm/dkfs/', r'xls|M2|денежн', 12)
+          links('https://www.cbr.ru/statistics/ms/', r'xls|M2|денежн', 12)
+          links('https://www.cbr.ru/analytics/dkp/monitoring/', r'xls', 6)
+          links('https://rosstat.gov.ru/statistics/price', r'xls|недел|ипц', 15)
+          print('\n## publications')
           try:
-              for p in json.loads(get('https://www.cbr.ru/dataservice/publications')):
-                  print('  ', p.get('id'), p.get('parent_id'), p.get('category_name'))
-          except Exception as e:
-              print('  ', e)
-          print('\n=== indicators_cpd.xlsx: строки')
-          b = get('https://www.cbr.ru/Content/Document/File/108632/indicators_cpd.xlsx', 120)
-          if b:
-              for ws in openpyxl.load_workbook(io.BytesIO(b), read_only=True, data_only=True).worksheets:
-                  rows = list(ws.iter_rows(values_only=True)); print(' лист', ws.title, len(rows))
-                  for r in rows[:60]:
-                      vals = [v for v in r if v is not None]
-                      print('   ', str(r[0])[:70] if r[0] else '-', '|', vals[-3:] if len(vals) > 1 else '')
+              for p in json.loads(get('https://www.cbr.ru/dataservice/publications') or b'[]'):
+                  if re.search(r'денеж|M2|инфляц|ожидан|кредит', str(p.get('category_name')), re.I): print(' ', p.get('id'), p.get('category_name'))
+          except Exception as e: print(' ', e)
+          print('\n## Infl_exp_26-10.xlsx'); dump(get('https://www.cbr.ru/Collection/Collection/File/62471/Infl_exp_26-10.xlsx', 120), 14)
+          print('\n## indicators_cpd.xlsx'); dump(get('https://www.cbr.ru/Content/Document/File/108632/indicators_cpd.xlsx', 120), 45)
           PY
+          { echo '```'; head -c 60000 /tmp/out.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
