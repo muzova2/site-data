@@ -99,8 +99,12 @@ jobs:
                       nm = (re.findall(r'<c:tx>.*?<c:v>(.*?)</c:v>', s, re.S) or [''])[0].strip()
                       cat = re.findall(r'<c:v>(.*?)</c:v>', (re.findall(r'<c:cat>(.*?)</c:cat>', s, re.S) or [''])[0])
                       val = re.findall(r'<c:v>(.*?)</c:v>', (re.findall(r'<c:val>(.*?)</c:val>', s, re.S) or [''])[0])
-                      if nm and len(cat) == len(val) and nm not in ser:
-                          ser[nm] = [(ym(datetime.date(1899, 12, 30) + datetime.timedelta(days=int(float(c)))), round(float(v), 1)) for c, v in zip(cat, val)]
+                      try:   # подписи-даты как числа Excel; ряды с текстовыми подписями пропускаем, из одноимённых берём самый длинный
+                          pts = [(ym(datetime.date(1899, 12, 30) + datetime.timedelta(days=int(float(c)))), round(float(v), 1)) for c, v in zip(cat, val)]
+                      except ValueError:
+                          continue
+                      if nm and len(cat) == len(val) and len(pts) > len(ser.get(nm, [])):
+                          ser[nm] = pts
               obs, exp = ser['годовая наблюдаемая инфляция'], ser['годовая инфляция, ожидаемая через год']
               ob = dict(obs)
               d['exp'] = {'month': exp[-1][0], 'expected': exp[-1][1], 'expected_prev': exp[-2][1],
@@ -108,7 +112,7 @@ jobs:
                           'hist': [[m, v, ob.get(m)] for m, v in exp], 'src': 'Банк России, опрос «инФОМ»'}
               print('exp:', d['exp']['month'], d['exp']['expected'], d['exp']['observed'])
           except Exception as e:
-              print('ожидания: ошибка', e)
+              print('ожидания: ошибка', repr(e), [k for k in locals().get('ser', {}) if 'инфляц' in k][:15])
           # 2) трендовая инфляция (оценка устойчивой инфляции Банка России), % годовых
           try:
               R = list(openpyxl.load_workbook(io.BytesIO(get(CBR + '/Content/Document/File/108633/est_infl.xlsx')), read_only=True, data_only=True).worksheets[0].iter_rows(values_only=True))
