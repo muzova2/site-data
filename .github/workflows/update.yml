@@ -63,14 +63,14 @@ jobs:
           import json, os, re, datetime, urllib.request
           t = datetime.date.today()
           url = ('https://www.cbr.ru/hd_base/infl/?UniDbQuery.Posted=True&UniDbQuery.From=01.01.%d&UniDbQuery.To=%s'
-                 % (t.year - 2, t.strftime('%d.%m.%Y')))
+                 % (2013, t.strftime('%d.%m.%Y')))
           page = urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'}), timeout=60).read().decode('utf-8', 'replace')
           rows = re.findall(r'<td[^>]*>\s*(\d\d)\.(\d{4})\s*</td>\s*<td[^>]*>\s*[\d,]+\s*</td>\s*<td[^>]*>\s*(-?[\d,]+)\s*</td>', page)
           yoy = sorted((y + '-' + m, float(v.replace(',', '.'))) for m, y, v in rows)
           assert len(yoy) >= 2, 'таблица ЦБ не разобрана'
           p = 'data/cpi.json'
           d = json.load(open(p)) if os.path.exists(p) else {}
-          d.update({'yoy_month': yoy[-1][0], 'yoy': yoy[-1][1], 'yoy_prev': yoy[-2][1], 'yoy_hist': yoy[-24:],
+          d.update({'yoy_month': yoy[-1][0], 'yoy': yoy[-1][1], 'yoy_prev': yoy[-2][1], 'yoy_hist': yoy,
                     'yoy_src': 'Банк России, «Инфляция и ключевая ставка»'})
           json.dump(d, open(p, 'w'), ensure_ascii=False)
           print('yoy:', d['yoy_month'], d['yoy'], 'месяцем раньше', d['yoy_prev'])
@@ -136,6 +136,16 @@ jobs:
               print('m2:', d['m2']['month'], d['m2']['value'], d['m2']['yoy'])
           except Exception as e:
               print('M2: ошибка', e)
+          # 4) средневзвешенная ставка по рублёвым вкладам населения до 1 года (как на странице «Доходность активов»)
+          try:
+              y = datetime.date.today().year
+              raw = json.loads(get(CBR + '/dataservice/data?y1=2013&y2=%d&publicationId=18&datasetId=37&measureId=2' % y))['RawData']
+              dep = sorted((x['date'][:7], round(x['obs_val'], 2)) for x in raw if x['element_id'] == 8 and x['obs_val'] is not None)
+              d['dep'] = {'month': dep[-1][0], 'value': dep[-1][1], 'hist': [list(p) for p in dep],
+                          'src': 'Банк России, средневзвешенная ставка по вкладам населения до 1 года'}
+              print('dep:', d['dep']['month'], d['dep']['value'], len(dep))
+          except Exception as e:
+              print('вклады: ошибка', repr(e))
           if d:
               d['updated'] = datetime.date.today().isoformat()
               json.dump(d, open(p, 'w'), ensure_ascii=False)
