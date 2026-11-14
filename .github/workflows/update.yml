@@ -75,6 +75,67 @@ jobs:
           json.dump(d, open(p, 'w'), ensure_ascii=False)
           print('yoy:', d['yoy_month'], d['yoy'], 'месяцем раньше', d['yoy_prev'])
           PY
+      - name: Ожидания населения, трендовая инфляция и денежная масса M2 (Банк России)
+        continue-on-error: true
+        run: |
+          python3 - <<'PY'
+          # 14.11.2026: пишет data/macro.json. Каждая часть независима: если одна не скачалась, остальные и прошлые значения остаются.
+          import json, os, re, io, zipfile, datetime, urllib.request, openpyxl
+          UA = {'User-Agent': 'Mozilla/5.0'}
+          CBR = 'https://www.cbr.ru'
+          get = lambda u: urllib.request.urlopen(urllib.request.Request(u, headers=UA), timeout=120).read()
+          p = 'data/macro.json'
+          d = json.load(open(p)) if os.path.exists(p) else {}
+          ym = lambda dt: dt.strftime('%Y-%m')
+          # 1) инфляционные ожидания населения (опрос «инФОМ»): последний файл со страницы ЦБ, ряды берём из графиков файла
+          try:
+              page = get(CBR + '/statistics/ddkp/inflationary_expectations/').decode('utf-8', 'replace')
+              href = re.findall(r'href="([^"]*Infl_exp_\d\d-\d\d\.xlsx)"', page)[0]
+              z = zipfile.ZipFile(io.BytesIO(get(CBR + href)))
+              ser = {}
+              for n in z.namelist():
+                  if not re.match(r'xl/charts/chart\d+\.xml$', n): continue
+                  for s in re.findall(r'<c:ser>(.*?)</c:ser>', z.read(n).decode('utf-8', 'replace'), re.S):
+                      nm = (re.findall(r'<c:tx>.*?<c:v>(.*?)</c:v>', s, re.S) or [''])[0].strip()
+                      cat = re.findall(r'<c:v>(.*?)</c:v>', (re.findall(r'<c:cat>(.*?)</c:cat>', s, re.S) or [''])[0])
+                      val = re.findall(r'<c:v>(.*?)</c:v>', (re.findall(r'<c:val>(.*?)</c:val>', s, re.S) or [''])[0])
+                      if nm and len(cat) == len(val) and nm not in ser:
+                          ser[nm] = [(ym(datetime.date(1899, 12, 30) + datetime.timedelta(days=int(float(c)))), round(float(v), 1)) for c, v in zip(cat, val)]
+              obs, exp = ser['годовая наблюдаемая инфляция'], ser['годовая инфляция, ожидаемая через год']
+              ob = dict(obs)
+              d['exp'] = {'month': exp[-1][0], 'expected': exp[-1][1], 'expected_prev': exp[-2][1],
+                          'observed': ob.get(exp[-1][0]), 'observed_prev': ob.get(exp[-2][0]),
+                          'hist': [[m, v, ob.get(m)] for m, v in exp], 'src': 'Банк России, опрос «инФОМ»'}
+              print('exp:', d['exp']['month'], d['exp']['expected'], d['exp']['observed'])
+          except Exception as e:
+              print('ожидания: ошибка', e)
+          # 2) трендовая инфляция (оценка устойчивой инфляции Банка России), % годовых
+          try:
+              R = list(openpyxl.load_workbook(io.BytesIO(get(CBR + '/Content/Document/File/108633/est_infl.xlsx')), read_only=True, data_only=True).worksheets[0].iter_rows(values_only=True))
+              hdr = next(r for r in R if sum(isinstance(x, datetime.datetime) for x in r) > 12)
+              row = next(r for r in R if r[0] and str(r[0]).startswith('Оценка трендовой инфляции (5'))
+              pts = [(ym(h), round(float(v), 2)) for h, v in zip(hdr, row) if isinstance(h, datetime.datetime) and isinstance(v, (int, float))]
+              d['trend'] = {'month': pts[-1][0], 'value': pts[-1][1], 'prev': pts[-2][1], 'hist': pts[-36:], 'src': 'Банк России, оценка трендовой инфляции'}
+              print('trend:', d['trend']['month'], d['trend']['value'])
+          except Exception as e:
+              print('трендовая: ошибка', e)
+          # 3) денежная масса M2 (млрд ₽, на 1-е число месяца) и её рост за год с 2014 года
+          try:
+              y = datetime.date.today().year
+              raw = json.loads(get(CBR + '/dataservice/data?y1=2013&y2=%d&publicationId=5&datasetId=7' % y))['RawData']
+              v = {x['date'][:7]: x['obs_val'] for x in raw if x['element_id'] == 12 and x['obs_val'] is not None}
+              ks = sorted(v)
+              def back(k): yy, mm = int(k[:4]), int(k[5:]); return '%d-%02d' % (yy - 1, mm)
+              hist = [[k, round((v[k] / v[back(k)] - 1) * 100, 1)] for k in ks if back(k) in v]
+              d['m2'] = {'month': ks[-1], 'value': round(v[ks[-1]], 1), 'yoy': hist[-1][1], 'yoy_prev': hist[-2][1], 'hist': hist,
+                         'src': 'Банк России, денежная масса (национальное определение)'}
+              print('m2:', d['m2']['month'], d['m2']['value'], d['m2']['yoy'])
+          except Exception as e:
+              print('M2: ошибка', e)
+          if d:
+              d['updated'] = datetime.date.today().isoformat()
+              json.dump(d, open(p, 'w'), ensure_ascii=False)
+          PY
       - name: Доски опционов (запасной снимок для страницы «Опционы»)
         continue-on-error: true
         run: |
