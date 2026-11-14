@@ -10,7 +10,7 @@ jobs:
       - name: Разведка
         run: |
           python3 - <<'PY' > /tmp/out.txt 2>&1 || true
-          import re, urllib.request, json, io, openpyxl, ssl
+          import re, urllib.request, json, io, openpyxl, ssl, html
           UA = {'User-Agent': 'Mozilla/5.0'}
           NOSSL = ssl.create_default_context(); NOSSL.check_hostname = False; NOSSL.verify_mode = ssl.CERT_NONE
           def get(u, n=60, ctx=None):
@@ -18,40 +18,18 @@ jobs:
                   return urllib.request.urlopen(urllib.request.Request(u, headers=UA), timeout=n, context=ctx).read()
               except Exception as e:
                   print('ERR', u, str(e)[:80]); return b''
-          def links(u, pat, lim=25, ctx=None):
-              t = get(u, ctx=ctx).decode('utf-8', 'replace'); print('\n##', u, len(t)); out = []
-              for h, txt in re.findall(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', t, re.S):
-                  if re.search(pat, h + txt, re.I) and len(out) < lim:
-                      out.append(h); print(' ', h, '|', re.sub(r'(&#160;|\s)+', ' ', re.sub('<[^>]+>', '', txt)).strip()[:90])
-              return out
-          L = links('https://www.cbr.ru/statistics/ddkp/aipd/', r'xls|csv')
-          if L:
-              u = L[0] if L[0].startswith('http') else 'https://www.cbr.ru' + L[0]
-              b = get(u, 120)
-              if b:
-                  for ws in openpyxl.load_workbook(io.BytesIO(b), read_only=True, data_only=True).worksheets[:3]:
-                      R = list(ws.iter_rows(values_only=True)); print(' [лист]', ws.title, len(R), ws.max_column)
-                      for i, r in enumerate(R[:40]):
-                          v = [str(x)[:28] for x in r if x is not None]
-                          if v: print('   ', i, v[:3], '..', v[-3:])
-          print('\n## M2 headerData')
-          d = json.loads(get('https://www.cbr.ru/dataservice/data?y1=2026&y2=2026&publicationId=5&datasetId=7') or b'{}')
-          print(json.dumps(d.get('headerData'), ensure_ascii=False)[:1500])
-          last = max((x['date'] for x in d.get('RawData', [])), default=None)
-          print(' last', last, [(x['element_id'], x['obs_val']) for x in d.get('RawData', []) if x['date'] == last])
-          d2 = json.loads(get('https://www.cbr.ru/dataservice/data?y1=2014&y2=2014&publicationId=5&datasetId=7') or b'{}')
-          print(' 2014 first', [(x['element_id'], x['obs_val'], x['date'][:7]) for x in d2.get('RawData', [])][:8])
-          print('\n## nedel_Ipc содержание')
-          b = get('https://rosstat.gov.ru/storage/mediabank/nedel_Ipc.xlsx', 120, NOSSL)
+          txt = lambda b: html.unescape(re.sub(r'<[^>]+>', ' ', b.decode('utf-8', 'replace')))
+          for u in ['https://rosstat.gov.ru/folder/313', 'https://rosstat.gov.ru/news', 'https://rosstat.gov.ru/folder/313/document']:
+              b = get(u, ctx=NOSSL); t = txt(b); print('\n##', u, len(t))
+              for m in re.finditer(r'(индекс потребительских цен|ИПЦ|инфляци)[^.]{0,160}', t, re.I):
+                  print('  ', re.sub(r'\s+', ' ', m.group(0))[:170])
+                  if m.start() > 0 and len(re.findall('', '')) > 30: break
+              hrefs = re.findall(r'href="([^"]*(?:document|news)/\d+[^"]*)"[^>]*>([^<]{0,140})', b.decode('utf-8', 'replace'))
+              for h, a in hrefs[:15]: print('   link', h, '|', a.strip()[:100])
+          print('\n## est_infl names')
+          b = get('https://www.cbr.ru/Content/Document/File/108633/est_infl.xlsx', 120)
           if b:
-              wb = openpyxl.load_workbook(io.BytesIO(b), read_only=True, data_only=True)
-              print(' листы', wb.sheetnames)
-              for r in list(wb.worksheets[0].iter_rows(values_only=True))[:8]:
-                  print('  ', [x for x in r if x is not None])
-              ws = wb.worksheets[-1]; R = list(ws.iter_rows(values_only=True))
-              print(' последний лист', ws.title, len(R))
-              for r in R[:6]:
-                  print('  ', [str(x)[:20] for x in r if x is not None][-5:])
-          links('https://rosstat.gov.ru/statistics/price', r'nedel|недел|ipc_w|ned_', 20, NOSSL)
+              for r in list(openpyxl.load_workbook(io.BytesIO(b), read_only=True, data_only=True).worksheets[0].iter_rows(values_only=True))[:8]:
+                  if r[0]: print('  ', str(r[0])[:200])
           PY
           { echo '```'; head -c 60000 /tmp/out.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
