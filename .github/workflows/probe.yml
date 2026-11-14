@@ -8,14 +8,18 @@ jobs:
     steps:
       - name: Проверка доступа
         run: |
+          set +e
           {
           echo '```'
           echo "IP: $(curl -s -m 10 https://ipinfo.io/ip) страна: $(curl -s -m 10 https://ipinfo.io/country)"
-          for u in https://invest-public-api.tbank.ru/rest/tinkoff.public.invest.api.contract.v1.InstrumentsService/Shares \
-                   https://invest-public-api.tinkoff.ru/rest/tinkoff.public.invest.api.contract.v1.InstrumentsService/Shares \
-                   https://sandbox-invest-public-api.tbank.ru/rest/tinkoff.public.invest.api.contract.v1.InstrumentsService/Shares; do
-            r=$(curl -s -m 30 -o /tmp/b -w "%{http_code} за %{time_total} c" -X POST -H 'Content-Type: application/json' -d '{"instrumentStatus":"INSTRUMENT_STATUS_BASE"}' "$u" 2>&1)
-            echo "$u -> $r | $(head -c 160 /tmp/b 2>/dev/null)"
+          for u in https://invest-public-api.tbank.ru https://invest-public-api.tinkoff.ru; do
+            echo "== $u"
+            echo | openssl s_client -connect ${u#https://}:443 -servername ${u#https://} 2>/dev/null | grep -E "^ *(s|i):" | head -4
+            curl -sv -m 30 -o /tmp/b -X POST -H 'Content-Type: application/json' -d '{"instrumentStatus":"INSTRUMENT_STATUS_BASE"}' "$u/rest/tinkoff.public.invest.api.contract.v1.InstrumentsService/Shares" 2>&1 | grep -E "SSL|issuer|subject|< HTTP|curl:" | head -6
+            echo "с -k (без проверки сертификата):"
+            curl -sk -m 30 -o /tmp/b -w "HTTP %{http_code} за %{time_total} c\n" -X POST -H 'Content-Type: application/json' -d '{"instrumentStatus":"INSTRUMENT_STATUS_BASE"}' "$u/rest/tinkoff.public.invest.api.contract.v1.InstrumentsService/Shares"
+            head -c 200 /tmp/b; echo
           done
           echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
