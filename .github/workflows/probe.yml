@@ -10,7 +10,7 @@ jobs:
       - name: Разведка
         run: |
           python3 - <<'PY' > /tmp/out.txt 2>&1 || true
-          import re, urllib.request, json, io, openpyxl, ssl
+          import re, urllib.request, json, io, openpyxl, ssl, zipfile
           UA = {'User-Agent': 'Mozilla/5.0'}
           NOSSL = ssl.create_default_context(); NOSSL.check_hostname = False; NOSSL.verify_mode = ssl.CERT_NONE
           def get(u, n=60, ctx=None):
@@ -18,35 +18,39 @@ jobs:
                   return urllib.request.urlopen(urllib.request.Request(u, headers=UA), timeout=n, context=ctx).read()
               except Exception as e:
                   print('ERR', u, str(e)[:80]); return b''
-          def links(u, pat, lim=12, ctx=None):
-              t = get(u, ctx=ctx).decode('utf-8', 'replace'); print('\n##', u, len(t)); k = 0
+          def links(u, pat, lim=25):
+              t = get(u).decode('utf-8', 'replace'); print('\n##', u, len(t)); k = 0
               for h, txt in re.findall(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', t, re.S):
                   if re.search(pat, h + txt, re.I) and k < lim:
                       k += 1; print(' ', h, '|', re.sub(r'(&#160;|\s)+', ' ', re.sub('<[^>]+>', '', txt)).strip()[:80])
-          def rows(b, sheet=0, r0=0, r1=200, tail=3):
-              ws = openpyxl.load_workbook(io.BytesIO(b), read_only=True, data_only=True).worksheets[sheet]
-              for i, r in enumerate(ws.iter_rows(values_only=True)):
-                  if i < r0: continue
-                  if i >= r1: break
-                  v = [x for x in r if x is not None]
-                  if v: print('  ', i, str(v[0])[:60].replace('\n', ' '), '|', [str(x)[:12] for x in v[1:3]], '..', [str(x)[:12] for x in v[-tail:]])
-          print('## Infl_exp: лист 1'); b = get('https://www.cbr.ru/Collection/Collection/File/62471/Infl_exp_26-10.xlsx', 120)
-          if b: rows(b, 0, 0, 132)
-          print('\n## indicators_cpd 44-57'); b = get('https://www.cbr.ru/Content/Document/File/108632/indicators_cpd.xlsx', 120)
-          if b: rows(b, 0, 44, 60)
-          links('https://www.cbr.ru/analytics/dkp/inflation/', r'xls|устойчив', 10)
-          links('https://www.cbr.ru/statistics/ddkp/', r'xls|устойчив|ожидан|M2', 10)
-          for p in (4, 5):
-              print('\n## datasets pub', p)
-              try:
-                  for d in json.loads(get('https://www.cbr.ru/dataservice/datasets?publicationId=%d' % p) or b'[]'):
-                      print('  ', d.get('id'), d.get('name'), d.get('type'), d.get('reporting'))
-                      if p == 5 or 'масс' in str(d.get('name')):
-                          for m in json.loads(get('https://www.cbr.ru/dataservice/measures?datasetId=%s' % d.get('id')) or b'{}').get('measure', [])[:10]:
-                              print('      measure', m.get('id'), m.get('name'))
-                          print('      years', get('https://www.cbr.ru/dataservice/years?datasetId=%s' % d.get('id'))[:120])
-              except Exception as e: print('  ', e)
-          links('https://rosstat.gov.ru/statistics/price', r'xls|недел|ипц|потреб', 20, NOSSL)
-          links('https://rosstat.gov.ru/folder/23652', r'xls|недел|ипц|потреб', 20, NOSSL)
+          links('https://www.cbr.ru/statistics/ddkp/inflationary_expectations/', r'xls|csv|ожидан')
+          links('https://www.cbr.ru/statistics/ddkp/', r'устойч|инфляц|ценов|xls')
+          links('https://www.cbr.ru/dkp/', r'устойч|инфляц|xls', 15)
+          print('\n## Infl_exp charts')
+          b = get('https://www.cbr.ru/Collection/Collection/File/62471/Infl_exp_26-10.xlsx', 120)
+          if b:
+              z = zipfile.ZipFile(io.BytesIO(b))
+              for n in sorted(x for x in z.namelist() if re.match(r'xl/charts/chart\d+\.xml', x)):
+                  t = z.read(n).decode('utf-8', 'replace')
+                  for ser in re.findall(r'<c:ser>(.*?)</c:ser>', t, re.S):
+                      nm = ''.join(re.findall(r'<c:tx>.*?<c:v>(.*?)</c:v>', ser, re.S)[:1])
+                      if not re.search(r'наблюд|ожида|медиан', nm, re.I): continue
+                      cats = re.findall(r'<c:cat>.*?</c:cat>', ser, re.S); cv = re.findall(r'<c:v>(.*?)</c:v>', cats[0]) if cats else []
+                      vals = re.findall(r'<c:val>.*?</c:val>', ser, re.S); vv = re.findall(r'<c:v>(.*?)</c:v>', vals[0]) if vals else []
+                      ref = re.findall(r'<c:val>.*?<c:f>(.*?)</c:f>', ser, re.S)
+                      print(' ', n, '|', nm[:60], '| n=', len(vv), '| cats', cv[-2:], '| vals', vv[-3:], '| ref', ref[:1])
+          print('\n## nedel_Ipc.xlsx')
+          b = get('https://rosstat.gov.ru/storage/mediabank/nedel_Ipc.xlsx', 120, NOSSL)
+          if b:
+              for ws in openpyxl.load_workbook(io.BytesIO(b), read_only=True, data_only=True).worksheets[:4]:
+                  R = list(ws.iter_rows(values_only=True)); print(' [лист]', ws.title, len(R))
+                  for i, r in enumerate(R):
+                      if i < 8 or i > len(R) - 6:
+                          v = [str(x)[:16] for x in r if x is not None]
+                          if v: print('   ', i, v[:4], '..', v[-4:])
+          print('\n## M2')
+          print(get('https://www.cbr.ru/dataservice/measures?datasetId=7')[:400])
+          print(get('https://www.cbr.ru/dataservice/data?y1=2025&y2=2026&publicationId=5&datasetId=7')[:900])
+          print(get('https://www.cbr.ru/dataservice/data?y1=2025&y2=2026&publicationId=5&datasetId=7&measureId=0')[:300])
           PY
           { echo '```'; head -c 60000 /tmp/out.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
