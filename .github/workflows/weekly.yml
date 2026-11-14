@@ -1,0 +1,47 @@
+# Раз в неделю собирает дивиденды и финансовые показатели акций из API Т-Инвестиций и отправляет их
+# в Google-таблицу (как раньше делала программа на компьютере Юлии; с VPN туда не достучаться).
+# Дальше всё как обычно: таблица пересчитывается вечером, задание «Обновить данные» кладёт файлы на сайт.
+# Токен «только для чтения» — секрет репозитория TINVEST_TOKEN (Settings → Secrets and variables → Actions).
+# Сертификат Т-Банка выдан Минцифры: корневой сертификат берём из цепочки сервера, сверяем отпечаток (шаг ниже)
+# и доверяем ему только для запросов к Т-Инвестициям. Ничего в репозиторий не записывает.
+name: Дивиденды и показатели акций (раз в неделю)
+on:
+  schedule:
+    - cron: '0 15 * * 5'   # пятница 18:00 МСК
+    - cron: '0 9 * * 6'    # суббота 12:00 МСК — запасной запуск
+  workflow_dispatch:
+concurrency:
+  group: tinvest-weekly
+  cancel-in-progress: false
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}
+      TBANK_CA: ${{ github.workspace }}/collector/russian_trusted_root_ca.pem
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Проверить, что токен задан
+        run: |
+          if [ -z "$TINVEST_TOKEN" ]; then echo "Нет секрета TINVEST_TOKEN — добавьте его в настройках репозитория"; exit 1; fi
+      - name: Корневой сертификат Минцифры (сверка отпечатка)
+        run: |
+          # берём корневой сертификат из цепочки, которую присылает сервер, и принимаем его, только если отпечаток
+          # совпадает с сертификатом «Russian Trusted Root CA» из хранилища Windows Юлии (действует до 28.02.2032)
+          PIN='8F:F9:15:CC:AB:7B:C1:6F:8C:5C:80:99:D5:3E:0E:11:5B:3A:EC:2F'
+          mkdir -p /tmp/chain && cd /tmp/chain
+          echo | openssl s_client -showcerts -connect invest-public-api.tbank.ru:443 -servername invest-public-api.tbank.ru 2>/dev/null \
+            | awk '/BEGIN CERTIFICATE/{n++} n{print > ("c" n ".pem")} /END CERTIFICATE/{close("c" n ".pem")}'
+          for f in c*.pem; do
+            fp=$(openssl x509 -in "$f" -noout -fingerprint -sha1 | cut -d= -f2)
+            if [ "$fp" = "$PIN" ]; then mkdir -p "$(dirname "$TBANK_CA")"; cp "$f" "$TBANK_CA"; echo "корневой сертификат принят: $fp"; exit 0; fi
+          done
+          echo "Отпечаток корневого сертификата не совпал — сбор не запускаем"; exit 1
+      - name: Дивиденды
+        working-directory: collector
+        run: python3 collect_dividends.py
+      - name: Финансовые показатели акций
+        working-directory: collector
+        run: python3 collect_fundamentals.py
