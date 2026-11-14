@@ -55,6 +55,26 @@ jobs:
           json.dump(d, open('data/cpi.json', 'w'), ensure_ascii=False)
           print('cpi:', d['month'], d['saar'], d['core_saar'])
           PY
+      - name: Годовая инфляция (ИПЦ, г/г) из таблицы Банка России «Инфляция и ключевая ставка»
+        continue-on-error: true
+        run: |
+          python3 - <<'PY'
+          # 14.11.2026: дописывает в data/cpi.json поля yoy (ИПЦ к тому же месяцу прошлого года), yoy_month, yoy_prev, yoy_hist.
+          import json, os, re, datetime, urllib.request
+          t = datetime.date.today()
+          url = ('https://www.cbr.ru/hd_base/infl/?UniDbQuery.Posted=True&UniDbQuery.From=01.01.%d&UniDbQuery.To=%s'
+                 % (t.year - 2, t.strftime('%d.%m.%Y')))
+          page = urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'}), timeout=60).read().decode('utf-8', 'replace')
+          rows = re.findall(r'<td[^>]*>\s*(\d\d)\.(\d{4})\s*</td>\s*<td[^>]*>\s*[\d,]+\s*</td>\s*<td[^>]*>\s*(-?[\d,]+)\s*</td>', page)
+          yoy = sorted((y + '-' + m, float(v.replace(',', '.'))) for m, y, v in rows)
+          assert len(yoy) >= 2, 'таблица ЦБ не разобрана'
+          p = 'data/cpi.json'
+          d = json.load(open(p)) if os.path.exists(p) else {}
+          d.update({'yoy_month': yoy[-1][0], 'yoy': yoy[-1][1], 'yoy_prev': yoy[-2][1], 'yoy_hist': yoy[-24:],
+                    'yoy_src': 'Банк России, «Инфляция и ключевая ставка»'})
+          json.dump(d, open(p, 'w'), ensure_ascii=False)
+          print('yoy:', d['yoy_month'], d['yoy'], 'месяцем раньше', d['yoy_prev'])
+          PY
       - name: Доски опционов (запасной снимок для страницы «Опционы»)
         continue-on-error: true
         run: |
