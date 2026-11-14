@@ -33,7 +33,8 @@ jobs:
           PIN='8F:F9:15:CC:AB:7B:C1:6F:8C:5C:80:99:D5:3E:0E:11:5B:3A:EC:2F'
           mkdir -p /tmp/chain && cd /tmp/chain
           echo | openssl s_client -showcerts -connect invest-public-api.tbank.ru:443 -servername invest-public-api.tbank.ru 2>/dev/null \
-            | awk '/BEGIN CERTIFICATE/{n++} n{print > ("c" n ".pem")} /END CERTIFICATE/{close("c" n ".pem")}'
+            | awk '/BEGIN CERTIFICATE/{n++; p=1} p{print > ("c" n ".pem")} /END CERTIFICATE/{p=0; close("c" n ".pem")}'
+          ls -la
           for f in c*.pem; do
             fp=$(openssl x509 -in "$f" -noout -fingerprint -sha1 | cut -d= -f2)
             if [ "$fp" = "$PIN" ]; then mkdir -p "$(dirname "$TBANK_CA")"; cp "$f" "$TBANK_CA"; echo "корневой сертификат принят: $fp"; exit 0; fi
