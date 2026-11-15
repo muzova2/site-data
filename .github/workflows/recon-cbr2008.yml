@@ -1,0 +1,38 @@
+name: recon-cbr2008 (временно, удалить)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Курс доллара и ставка рефинансирования 2008-2009
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import urllib.request, re
+          def get(url):
+              req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+              with urllib.request.urlopen(req, timeout=60) as r:
+                  return r.read().decode("windows-1251", "ignore") if "XML" in url else r.read().decode("utf-8", "ignore")
+          x = get("https://www.cbr.ru/scripts/XML_dynamic.asp?date_req1=01/07/2008&date_req2=31/03/2009&VAL_NM_RQ=R01235")
+          rows = re.findall(r'Date="([\d.]+)".*?<Value>([\d,]+)</Value>', x, re.S)
+          print("## USD курс ЦБ 07.2008-03.2009, дней", len(rows))
+          vals = [(d, float(v.replace(",", "."))) for d, v in rows]
+          if vals:
+              lo = min(vals, key=lambda t: t[1]); hi = max(vals, key=lambda t: t[1])
+              print("- min", lo, "max", hi)
+              for d, v in vals:
+                  if d.startswith("01.") or d.startswith("02.") or d.startswith("03."):
+                      print("-", d, v)
+          print()
+          print("## Ставка рефинансирования")
+          h = get("https://www.cbr.ru/hd_base/refinancing/")
+          t = re.sub(r"<[^>]+>", " ", h)
+          t = re.sub(r"\s+", " ", t)
+          for m in re.finditer(r"(\d{2}\.\d{2}\.200[789])\s+([\d,]+)", t):
+              print("-", m.group(1), m.group(2))
+          i = t.find("2008")
+          print()
+          print("фрагмент:", t[max(0, i-1500):i+1500])
+          PY
