@@ -200,6 +200,7 @@ function doPost(e) {
     var token = PropertiesService.getScriptProperties().getProperty('TINVEST_TOKEN') || '';
     if (!token || body.sig !== sha256_(token)) throw new Error('подпись не совпала');
     if (body.kind === 'fund') return postFund_(body);     // финансовые показатели акций для страницы «Анализ акций»
+    if (body.kind === 'ratings_add') return postRatings_(body);   // 24.11.2026: новые эмитенты для листа «Рейтинги» от сбора на GitHub
     if (!body.items || !body.items.length) throw new Error('пустой список выплат');
     write_(SH_RAW, RAW_HEAD, body.items.map(function (r) { return [r[0], r[1], r[2], r[3], r[4], r[5]]; }));
     write_(SH_RAWCO, RAWCO_HEAD, (body.companies || []).map(function (r) { return [r[0], r[1], r[2]]; }));
@@ -208,6 +209,17 @@ function doPost(e) {
     out = { ok: true, items: body.items.length };
   } catch (x) { out = { ok: false, error: String(x.message || x) }; }
   return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
+}
+/** 24.11.2026: сбор облигаций идёт на GitHub. Новых эмитентов (ИНН, название) он присылает сюда, и они дописываются
+ *  в конец листа «Рейтинги» с пустыми клетками — как раньше делала ratings_(). Уже имеющиеся строки не трогаются. */
+function postRatings_(body) {
+  var add = (body.rows || []).slice(0, 300), sh = sheet_(SH_RATE, RATE_HEAD), have = {};
+  read_(SH_RATE).forEach(function (r) { have[String(r[0]).trim()] = 1; });
+  var fresh = add.filter(function (r) { var inn = String((r && r[0]) || '').trim(); if (!inn || have[inn]) return false; have[inn] = 1; return true; });
+  if (fresh.length) sh.getRange(sh.getLastRow() + 1, 1, fresh.length, RATE_HEAD.length).setNumberFormat('@')
+    .setValues(fresh.map(function (r) { return [String(r[0]).trim(), String(r[1] || ''), '', '', '', '', '', '']; }));
+  log_('Рейтинги: с GitHub пришло эмитентов ' + add.length + ', дописано новых ' + fresh.length);
+  return ContentService.createTextOutput(JSON.stringify({ ok: true, added: fresh.length })).setMimeType(ContentService.MimeType.JSON);
 }
 function postFund_(body) {
   if (!body.items || body.items.length < 50) throw new Error('слишком мало бумаг с показателями');
@@ -370,4 +382,12 @@ function sheetDump_(name) {
   if (!sh) return JSON.stringify({ name: name, rows: [] });
   var v = sh.getDataRange().getValues().map(function (r) { return r.map(function (x) { return x instanceof Date ? { $d: x.toISOString() } : x; }); });
   return JSON.stringify({ name: name, rows: v });
+}
+
+// 24.11.2026: сбор перенесён на GitHub, ежедневные запуски здесь больше не нужны. Удаляет все триггеры проекта.
+// Вернуть: setup(), setupBonds(), setupMarket(), setupDohod().
+function offTriggers() {
+  var names = [];
+  ScriptApp.getProjectTriggers().forEach(function (t) { names.push(t.getHandlerFunction()); ScriptApp.deleteTrigger(t); });
+  console.log("Удалены триггеры (" + names.length + "): " + names.join(", "));
 }

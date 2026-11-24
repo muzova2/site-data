@@ -120,6 +120,7 @@ class Sheet {
   setFrozenRows() { return this; }
 }
 const sheets = {};
+let googleInn = null;   // ИНН, которые были в листе «Рейтинги» Google на начало запуска
 function googleSheet(name) {
   let err;
   for (let i = 0; i < 3; i++) {
@@ -139,7 +140,8 @@ function loadSheet(name) {
   const fromState = () => (fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')).map(r => r.map(revive)) : null);
   let rows = null, src = '';
   if (INPUT.includes(name)) {
-    try { rows = googleSheet(name); src = 'Google'; } catch (e) { rows = fromState(); src = 'state (Google не ответил: ' + e.message + ')'; }
+    try { rows = googleSheet(name); src = 'Google'; if (name === 'Рейтинги') googleInn = new Set(rows.slice(1).map(r => String(r[0]).trim())); }
+    catch (e) { rows = fromState(); src = 'state (Google не ответил: ' + e.message + ')'; }
   } else {
     rows = fromState(); src = 'state';
     if (!rows) { try { rows = googleSheet(name); src = 'Google (первый запуск)'; } catch (e) { rows = null; } }
@@ -243,6 +245,25 @@ for (const k of want) {
   const sec = Math.round((Date.now() - t0) / 1000);
   report.push(k + ': ' + (err ? 'ошибка' : saved[k] ? 'готово, ' + Math.round(saved[k] / 1024) + ' КБ' : 'файл не обновлён') + ', ' + sec + ' с');
 }
+
+// ---------- новые эмитенты → лист «Рейтинги» в Google ----------
+// Раньше ratings_() дописывала их прямо в таблицу; теперь отправляем в веб-приложение (doPost, kind ratings_add),
+// оно дописывает только тех, кого в листе ещё нет. Подпись — SHA-256 токена Т-Инвестиций, как у сборщика дивидендов.
+(function sendNewIssuers() {
+  const sh = sheets['Рейтинги'];
+  if (!sh || !googleInn) return;
+  const fresh = sh.rows.slice(1).filter(r => r[0] !== '' && r[0] != null && !googleInn.has(String(r[0]).trim())).map(r => [String(r[0]).trim(), String(r[1] || '')]);
+  if (!fresh.length) { console.log('Рейтинги: новых эмитентов нет'); return; }
+  if (!process.env.TINVEST_TOKEN) { console.log('Рейтинги: новых эмитентов ' + fresh.length + ', но нет TINVEST_TOKEN — не отправлены'); return; }
+  const body = JSON.stringify({ kind: 'ratings_add', sig: crypto.createHash('sha256').update(process.env.TINVEST_TOKEN, 'utf8').digest('hex'), rows: fresh });
+  const f = path.join(os.tmpdir(), 'ratings_add.json');
+  fs.writeFileSync(f, body);
+  let out = '';
+  try { out = cp.execFileSync('curl', ['-sL', '--max-time', '120', '-H', 'Content-Type: application/json', '--data-binary', '@' + f, EXEC], { encoding: 'utf8' }); }
+  catch (e) { out = 'ошибка curl: ' + e.message; }
+  fs.rmSync(f, { force: true });
+  console.log('Рейтинги: отправлено новых эмитентов ' + fresh.length + ' (' + fresh.map(r => r[1] || r[0]).slice(0, 5).join('; ') + (fresh.length > 5 ? '…' : '') + '), ответ: ' + out.slice(0, 200));
+})();
 
 // ---------- сохранить состояние ----------
 fs.mkdirSync(path.join(STATE, 'sheets'), { recursive: true });
