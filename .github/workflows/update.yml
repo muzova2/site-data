@@ -23,7 +23,8 @@ jobs:
       - name: Забрать данные из веб-приложения Google
         run: |
           EXEC='https://script.google.com/macros/s/AKfycbyQammVyKFaW1iym9aCJV7lxRWvePm8T4xx5wkstlF56SHBSVNlfsji4BX7AXXq_YAG/exec'
-          mkdir -p data
+          mkdir -p data /tmp/old
+          cp data/*.json /tmp/old/ 2>/dev/null || true   # 24.11.2026: вчерашние файлы — для проверки ниже
           for k in dividends bonds shares funds indices curve coupons fx futures options dohod; do
             if [ "$k" = dividends ]; then q=''; else q="?d=$k"; fi
             for i in 1 2 3; do
@@ -33,6 +34,39 @@ jobs:
               echo "$k: попытка $i не удалась"; sleep 20
             done
           done
+      - name: Курсы с Мосбиржи напрямую (юань, золото, серебро, биткоин, эфир)
+        # 24.11.2026: 23.11 Мосбиржа перестала отвечать Google, курсы пришли без этих позиций и главная сайта опустела.
+        # Теперь GitHub сам берёт их с биржи; при сбое остаётся прежняя позиция (её вернёт следующий шаг).
+        continue-on-error: true
+        run: python3 collector/fx_moex.py data/fx.json
+      - name: Проверка — не потерялись ли позиции по сравнению со вчерашним днём
+        # 24.11.2026: если в свежем файле не хватает позиций (курсы — по id) или строк стало заметно меньше (больше чем на 10 %),
+        # возвращаем вчерашнее, чтобы страницы не ломались из-за частичного сбоя источника.
+        continue-on-error: true
+        run: |
+          python3 - <<'PY'
+          import json, os, shutil
+          for f in sorted(os.listdir('/tmp/old')):
+              p, o = 'data/' + f, '/tmp/old/' + f
+              if not os.path.exists(p):
+                  continue
+              try:
+                  new, old = json.load(open(p, encoding='utf-8')), json.load(open(o, encoding='utf-8'))
+              except Exception as e:
+                  print(f, 'не читается, оставлен вчерашний:', e); shutil.copy(o, p); continue
+              if not isinstance(new, dict) or not isinstance(old, dict):
+                  continue
+              if isinstance(new.get('items'), list) and isinstance(old.get('items'), list):
+                  have = {x.get('id') for x in new['items']}
+                  miss = [x for x in old['items'] if x.get('id') not in have]
+                  if miss:
+                      new['items'] += miss
+                      json.dump(new, open(p, 'w', encoding='utf-8'), ensure_ascii=False, separators=(',', ':'))
+                      print(f, 'возвращены вчерашние позиции:', ', '.join(str(x.get('id')) for x in miss))
+              elif isinstance(new.get('rows'), list) and isinstance(old.get('rows'), list) and len(new['rows']) < 0.9 * len(old['rows']):
+                  shutil.copy(o, p)
+                  print(f, 'строк стало', len(new['rows']), 'вместо', len(old['rows']), '— оставлен вчерашний файл')
+          PY
       - name: Инфляция без сезонности (SAAR) и базовая инфляция из файла Банка России
         continue-on-error: true
         run: |
