@@ -20,6 +20,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Корневой сертификат Минцифры для Мосбиржи (сверка отпечатка)
+        # 24.11.2026: iss.moex.com перешёл на сертификат от Russian Trusted Sub CA (Минцифры); серверы GitHub и Google ему не доверяют.
+        # Берём корень из цепочки биржи и добавляем в доверенные, только если отпечаток совпадает с «Russian Trusted Root CA»
+        # из хранилища Windows Юлии (тот же, что в weekly.yml; действует до 28.02.2032).
+        continue-on-error: true
+        run: |
+          PIN='8F:F9:15:CC:AB:7B:C1:6F:8C:5C:80:99:D5:3E:0E:11:5B:3A:EC:2F'
+          mkdir -p /tmp/chain && cd /tmp/chain
+          echo | openssl s_client -showcerts -connect iss.moex.com:443 -servername iss.moex.com 2>/dev/null \
+            | awk '/BEGIN CERTIFICATE/{n++; p=1} p{print > ("c" n ".pem")} /END CERTIFICATE/{p=0; close("c" n ".pem")}'
+          for f in c*.pem; do
+            fp=$(openssl x509 -in "$f" -noout -fingerprint -sha1 | cut -d= -f2)
+            if [ "$fp" = "$PIN" ]; then
+              sudo cp "$f" /usr/local/share/ca-certificates/russian_trusted_root_ca.crt && sudo update-ca-certificates
+              echo "корневой сертификат принят: $fp"; exit 0
+            fi
+          done
+          echo "Отпечаток корневого сертификата не совпал — сертификат не добавлен"; exit 1
       - name: Забрать данные из веб-приложения Google
         run: |
           EXEC='https://script.google.com/macros/s/AKfycbyQammVyKFaW1iym9aCJV7lxRWvePm8T4xx5wkstlF56SHBSVNlfsji4BX7AXXq_YAG/exec'
