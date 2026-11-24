@@ -52,6 +52,16 @@ jobs:
               echo "$k: попытка $i не удалась"; sleep 20
             done
           done
+      - name: Сбор на GitHub тем же кодом, что в Google (облигации, купоны, дивиденды, кривая, индексы, акции, фонды, курсы, фьючерсы, опционы, доходность)
+        # 24.11.2026: Google больше не подключается к Мосбирже. gas/run.js запускает код Google здесь; что собралось — перезаписывает
+        # файлы, полученные от Google выше; что не собралось — остаётся от Google (или вчерашнее после проверки ниже).
+        # Накопительные листы (история кривой, справочник облигаций и т. п.) хранятся в ветке state.
+        continue-on-error: true
+        timeout-minutes: 90
+        run: |
+          git clone -q --depth 1 -b state "https://github.com/${{ github.repository }}" state 2>/dev/null || mkdir -p state
+          rm -rf state/.git
+          node gas/run.js
       - name: Курсы с Мосбиржи напрямую (юань, золото, серебро, биткоин, эфир)
         # 24.11.2026: 23.11 Мосбиржа перестала отвечать Google, курсы пришли без этих позиций и главная сайта опустела.
         # Теперь GitHub сам берёт их с биржи; при сбое остаётся прежняя позиция (её вернёт следующий шаг).
@@ -269,3 +279,14 @@ jobs:
           git add data
           git diff --cached --quiet || git commit -m "Данные $(date -u +%F)"
           git push
+      - name: Сохранить состояние сбора (ветка state, без истории)
+        if: always()
+        run: |
+          [ -f state/props.json ] || { echo "состояния нет — пропуск"; exit 0; }
+          cd state
+          git init -q -b state
+          git config user.name 'site-data bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A
+          git commit -qm "Состояние сбора $(date -u +%F)"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" state
