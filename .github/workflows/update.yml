@@ -61,6 +61,8 @@ jobs:
         # Накопительные листы (история кривой, справочник облигаций и т. п.) хранятся в ветке state.
         continue-on-error: true
         timeout-minutes: 90
+        env:
+          TINVEST_TOKEN: ${{ secrets.TINVEST_TOKEN }}   # только для подписи: новые эмитенты → лист «Рейтинги» в Google
         run: |
           git clone -q --depth 1 -b state "https://github.com/${{ github.repository }}" state 2>/dev/null || mkdir -p state
           rm -rf state/.git
