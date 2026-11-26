@@ -142,6 +142,40 @@ jobs:
           json.dump(d, open(p, 'w'), ensure_ascii=False)
           print('yoy:', d['yoy_month'], d['yoy'], 'месяцем раньше', d['yoy_prev'])
           PY
+      - name: Инфляция по годам и с начала года (для страницы «Инфляция по годам»)
+        continue-on-error: true
+        run: |
+          python3 - <<'PY'
+          # 26.11.2026: из годовой инфляции ЦБ (yoy_hist) считает инфляцию за каждый год (декабрь к декабрю),
+          # помесячную инфляцию и рост цен с начала года. Опора: Росстат, м/м за 2025 год и официальные «с начала года».
+          # Формула: м/м(t) = (1 + г/г(t)) / (1 + г/г(t-1)) * (1 + м/м(t-12)).
+          import json
+          ANCHOR_MM = {'2025-01': 1.23, '2025-02': 0.81, '2025-03': 0.65, '2025-04': 0.40, '2025-05': 0.43, '2025-06': 0.20,
+                       '2025-07': 0.57, '2025-08': -0.40, '2025-09': 0.34, '2025-10': 0.50, '2025-11': 0.42, '2025-12': 0.32}
+          ANCHOR_YTD = {'2026-09': 5.04, '2026-10': 6.08}   # Росстат; дописывать новые официальные значения сюда
+          p = 'data/cpi.json'
+          d = json.load(open(p))
+          yoy = dict(d['yoy_hist'])
+          def prev(k, n=1):
+              y, m = map(int, k.split('-')); i = y * 12 + m - 1 - n
+              return '%d-%02d' % (i // 12, i % 12 + 1)
+          mm = dict(ANCHOR_MM)
+          for k in sorted(yoy):
+              if k <= '2025-12' or k in mm: continue
+              if prev(k) in yoy and prev(k, 12) in mm:
+                  mm[k] = ((1 + yoy[k] / 100) / (1 + yoy[prev(k)] / 100) * (1 + mm[prev(k, 12)] / 100) - 1) * 100
+          ytd = {}
+          for k in sorted(mm):
+              if k < '2026-01': continue
+              base = 1.0 if k.endswith('-01') else 1 + ytd[prev(k)] / 100
+              ytd[k] = ANCHOR_YTD.get(k, (base * (1 + mm[k] / 100) - 1) * 100)
+          annual = {k[:4]: v for k, v in yoy.items() if k.endswith('-12')}
+          last = max(ytd)
+          d.update({'mm': {k: round(v, 2) for k, v in mm.items()}, 'ytd_hist': {k: round(v, 2) for k, v in ytd.items()},
+                    'ytd': {'month': last, 'v': round(ytd[last], 2)}, 'annual': annual})
+          json.dump(d, open(p, 'w'), ensure_ascii=False)
+          print('ytd:', last, d['ytd']['v'], '| годы:', min(annual), '…', max(annual), annual[max(annual)])
+          PY
       - name: Ожидания населения, трендовая инфляция и денежная масса M2 (Банк России)
         continue-on-error: true
         run: |
